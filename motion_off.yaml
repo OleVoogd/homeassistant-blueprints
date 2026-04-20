@@ -1,0 +1,42 @@
+blueprint:
+  name: Slå av lys ved manglende bevegelse
+  description: Skrur kun av lys når det ikke har vært bevegelse i valgt tid
+  domain: automation
+
+  input:
+    motion_entity:
+      name: Bevegelsessensor
+      selector:
+        entity:
+          domain: binary_sensor
+
+    light_target:
+      name: Lys
+      selector:
+        target:
+          entity:
+            domain: light
+
+    no_motion_wait:
+      name: Ventetid (sekunder)
+      default: 300
+      selector:
+        number:
+          min: 0
+          max: 3600
+          unit_of_measurement: seconds
+
+mode: restart
+
+trigger:
+  - platform: state
+    entity_id: !input motion_entity
+    to: "off"
+    for:
+      seconds: !input no_motion_wait
+
+condition: []
+
+action:
+  - service: light.turn_off
+    target: !input light_target

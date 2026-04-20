@@ -1,0 +1,862 @@
+blueprint:
+  name: "Klimastyring – Automatisk varmepumpe"
+  domain: automation
+  author: "Ditt navn her"
+  description: >
+    # 🌡️ Klimastyring – Automatisk varmepumpe
+
+
+    Automatiserer én eller flere varmepumper basert på innetemperatur,
+    utetemperatur og timesbasert værprognose. Utviklet for norsk klima.
+
+
+    ---
+
+
+    ## ✅ Hva du trenger å opprette i HA først
+
+
+    Gå til **Innstillinger → Enheter og tjenester → Hjelpere** og opprett følgende
+    (du velger selv navn og entity ID – bare husk å velge riktig under oppsett):
+
+
+    | Type | Eksempel navn | Eksempel entity ID |
+    |---|---|---|
+    | Av/På | Klimastyring - Manuell overstyring | `input_boolean.klima_manuell_overstyring` |
+    | Av/På | Klimastyring - Vi er hjemme | `input_boolean.klimastyring_vi_er_hjemme` |
+    | Dato og tid | Klimastyring - Siste endring | `input_datetime.klimastyring_siste_endring` |
+
+
+    Du trenger også:
+
+    - En **temperatursensor** for rommet/etasjen som styres
+
+    - En eller flere **climate-enheter** (varmepumper)
+
+    - En **værentitet** (sjekk under Innstillinger → Integrasjoner)
+
+
+    ---
+
+
+    ## ⚙️ Parametere forklart
+
+
+    ### Temperaturer
+
+    | Parameter | Standard | Forklaring |
+    |---|---|---|
+    | Komfort høy | 21°C | Innetemperatur der vifte aktiveres |
+    | Setpoint dag | 20°C | Ønsket innetemperatur på dagtid |
+    | Setpoint natt | 19°C | Ønsket innetemperatur om natten |
+    | Setpoint borte | 17°C | Temperatur når ingen er hjemme |
+    | Setpoint kuldesmell | 22°C | Temperatur ved varslet kuldesmell neste dag |
+
+
+    ### Varme-grenser (utetemperatur)
+
+    | Parameter | Standard | Forklaring |
+    |---|---|---|
+    | Varme grense sol | 10°C | Maks uteprognose for å starte varme på soldager |
+    | Varme grense skyet | 15°C | Maks uteprognose for å starte varme på skyete dager |
+    | Stopp varme grense | 22°C | Prognose-maks som stopper varme |
+    | Stopp varme live | 17°C | Nåværende utetemperatur som stopper varme |
+    | Vifte start ute | 17°C | Min utetemperatur for å starte vifte om natten |
+    | Kuldesmell grense | -10°C | Laveste meldte temp i morgen som trigger forhåndsvarming |
+
+
+    ### Timing
+
+    | Parameter | Standard | Forklaring |
+    |---|---|---|
+    | Ventetid minutter | 15 min | Minimum tid mellom modusendringer (beskytter pumpa) |
+    | Dag start | 08:00 | Tidspunkt for overgang til dagmodus |
+    | Natt start | 00:00 | Tidspunkt for overgang til nattmodus |
+
+
+    ---
+
+
+    ## 🔄 Slik fungerer automasjonen
+
+
+    Automasjonen kjøres hvert 5. minutt og ved temperaturendringer.
+
+    Den velger alltid første case som passer:
+
+
+    | Case | Navn | Utløser |
+    |---|---|---|
+    | 0 | Forhåndsvarming | Kveld + kuldesmell meldt i morgen + hjemme |
+    | 1 | Start varme | Kaldt ute nå eller kaldt i prognosen |
+    | 2 | Stopp varme | Varmt nok ute (prognose eller live) |
+    | 3 | Start vifte | For varmt inne + hjemme |
+    | 4 | Nedgrader vifte | Ikke lenger for varmt inne |
+    | 5 | Sirkulasjon | Pumpa er av – start stille vifte |
+
+
+    ---
+
+
+    ## 💡 Tips
+
+
+    - Slå på **Manuell overstyring** for å pause automasjonen helt
+
+    - Slå på/av **Vi er hjemme** når du reiser – pumpa holder da setpoint borte
+
+    - Sjekk **Logbook** i HA og filtrer på "Klimastyring" for å se hva som skjedde
+
+    - Alle loggmeldinger starter med [CASE X] for enkel filtrering
+
+
+  input:
+
+    # ============================================================
+    # SEKSJON 1 – PÅKREVD: Velg dine enheter
+    # Disse har ingen standardverdier – du må velge selv.
+    # ============================================================
+
+    sensor_inne:
+      name: "📡 Innetemperatur sensor"
+      description: >
+        Temperatursensor som representerer rommet/etasjen som styres.
+        Eksempel: sensor.stue_temperatur
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
+    climate_enheter:
+      name: "🌡️ Varmepumpe(r)"
+      description: >
+        Velg én eller flere varmepumper som skal styres likt.
+        Eksempel: climate.spisestue, climate.tv_stue
+      selector:
+        entity:
+          domain: climate
+          multiple: true
+
+    weather_entity:
+      name: "🌤️ Værentitet"
+      description: >
+        Værtjenesten som brukes for prognose.
+        Finn den under Innstillinger → Integrasjoner → din værtjeneste.
+        Eksempel: weather.forecast_home
+      selector:
+        entity:
+          domain: weather
+
+    boolean_overstyring:
+      name: "⏸️ Manuell overstyring (input_boolean)"
+      description: >
+        Når denne er PÅ stopper automasjonen helt. Bruk som pause-knapp.
+        Opprett en Av/På-hjelper og velg den her.
+        Eksempel: input_boolean.klima_manuell_overstyring
+      selector:
+        entity:
+          domain: input_boolean
+
+    boolean_hjemme:
+      name: "🏠 Vi er hjemme (input_boolean)"
+      description: >
+        Når denne er AV brukes setpoint borte, og vifte-komfort deaktiveres.
+        Opprett en Av/På-hjelper og velg den her.
+        Eksempel: input_boolean.klimastyring_vi_er_hjemme
+      selector:
+        entity:
+          domain: input_boolean
+
+    datetime_siste_endring:
+      name: "⏱️ Siste endring (input_datetime)"
+      description: >
+        Brukes internt for å hindre for raske modusendringer (sykkelbeskyttelse).
+        Opprett en Dato og tid-hjelper og velg den her.
+        Eksempel: input_datetime.klimastyring_siste_endring
+      selector:
+        entity:
+          domain: input_datetime
+
+    # ============================================================
+    # SEKSJON 2 – PARAMETERE
+    # Alle har fornuftige standardverdier – juster etter behov.
+    # ============================================================
+
+    komfort_høy:
+      name: "Komfort grense inne (°C)"
+      description: "Innetemperatur der vifte aktiveres. Eksempel: 21°C."
+      default: 21
+      selector:
+        number:
+          min: 18
+          max: 28
+          unit_of_measurement: "°C"
+
+    setpoint_dag:
+      name: "Setpoint dag (°C)"
+      description: "Ønsket innetemperatur på dagtid. Eksempel: 20°C."
+      default: 20
+      selector:
+        number:
+          min: 15
+          max: 25
+          unit_of_measurement: "°C"
+
+    setpoint_natt:
+      name: "Setpoint natt (°C)"
+      description: "Ønsket innetemperatur om natten. Eksempel: 19°C."
+      default: 19
+      selector:
+        number:
+          min: 15
+          max: 24
+          unit_of_measurement: "°C"
+
+    setpoint_borte:
+      name: "Setpoint borte (°C)"
+      description: "Temperatur når ingen er hjemme. Eksempel: 17°C."
+      default: 17
+      selector:
+        number:
+          min: 10
+          max: 20
+          unit_of_measurement: "°C"
+
+    setpoint_kuldesmell:
+      name: "Setpoint kuldesmell (°C)"
+      description: >
+        Forhåndsvarmer til denne temperaturen kvelden før meldt kuldesmell.
+        Eksempel: 22°C.
+      default: 22
+      selector:
+        number:
+          min: 18
+          max: 26
+          unit_of_measurement: "°C"
+
+    varme_grense_sol:
+      name: "Varme grense sol (°C)"
+      description: >
+        Maks prognosetemperatur for å starte varme på soldager.
+        Lavere enn skyet fordi solen bidrar med gratisvarme.
+        Eksempel: 10°C.
+      default: 10
+      selector:
+        number:
+          min: -5
+          max: 20
+          unit_of_measurement: "°C"
+
+    varme_grense_skyet:
+      name: "Varme grense skyet (°C)"
+      description: >
+        Maks prognosetemperatur for å starte varme på skyete dager.
+        Høyere enn sol fordi det ikke kommer gratisvarme.
+        Eksempel: 15°C.
+      default: 15
+      selector:
+        number:
+          min: -5
+          max: 22
+          unit_of_measurement: "°C"
+
+    stopp_varme_grense:
+      name: "Stopp varme grense prognose (°C)"
+      description: >
+        Hvis prognosemaks overstiger denne stoppes varmen.
+        Eksempel: 22°C.
+      default: 22
+      selector:
+        number:
+          min: 15
+          max: 30
+          unit_of_measurement: "°C"
+
+    stopp_varme_grense_live:
+      name: "Stopp varme grense live (°C)"
+      description: >
+        Hvis neste times utetemperatur overstiger denne stoppes varmen umiddelbart.
+        Fanger opp varme dager der prognosen ikke har oppdatert seg.
+        Eksempel: 17°C.
+      default: 17
+      selector:
+        number:
+          min: 10
+          max: 25
+          unit_of_measurement: "°C"
+
+    vifte_start_ute:
+      name: "Vifte start ute (°C)"
+      description: >
+        Minimum utetemperatur for å starte vifte om natten.
+        Under denne antas at huset kjøler seg ned naturlig.
+        Eksempel: 17°C.
+      default: 17
+      selector:
+        number:
+          min: 10
+          max: 25
+          unit_of_measurement: "°C"
+
+    kuldesmell_grense:
+      name: "Kuldesmell grense (°C)"
+      description: >
+        Hvis laveste meldte temperatur i morgen er under denne,
+        starter forhåndsvarming kvelden før.
+        Eksempel: -10°C.
+      default: -10
+      selector:
+        number:
+          min: -25
+          max: 0
+          unit_of_measurement: "°C"
+
+    ventetid_minutter:
+      name: "Ventetid mellom endringer (minutter)"
+      description: >
+        Minimum antall minutter mellom hver modusendring.
+        Beskytter pumpa mot rask av/på-sykling.
+        Eksempel: 15 minutter.
+      default: 15
+      selector:
+        number:
+          min: 5
+          max: 60
+          unit_of_measurement: "min"
+
+    dag_start_tid:
+      name: "Dag start tidspunkt"
+      description: "Tidspunkt for overgang til dagmodus. Standard: 08:00."
+      default: "08:00:00"
+      selector:
+        time: {}
+
+    natt_start_tid:
+      name: "Natt start tidspunkt"
+      description: "Tidspunkt for overgang til nattmodus. Standard: 00:00."
+      default: "00:00:00"
+      selector:
+        time: {}
+
+# ============================================================
+# AUTOMASJON
+# ============================================================
+triggers:
+  - trigger: time_pattern
+    minutes: /5
+    id: tilstand
+
+  - trigger: state
+    entity_id: !input sensor_inne
+    id: sensor
+
+  - trigger: time
+    at: !input dag_start_tid
+    id: dag_start
+
+  - trigger: time
+    at: !input natt_start_tid
+    id: natt_start
+
+actions:
+  # ----------------------------------------------------------
+  # DAG START – reset og justering for dagtid
+  # ----------------------------------------------------------
+  - if:
+      - condition: trigger
+        id: dag_start
+    then:
+      - variables:
+          climate_enhet: "{{ (expand(!input climate_enheter) | map(attribute='entity_id') | list)[0] }}"
+          modus: "{{ states(climate_enhet) }}"
+
+      - action: input_boolean.turn_off
+        target:
+          entity_id: !input boolean_overstyring
+
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: !input datetime_siste_endring
+        data:
+          datetime: "1970-01-01 00:00:00"
+
+      - action: logbook.log
+        data:
+          name: Klimastyring
+          message: >
+            [DAG START]
+            Manuell overstyring nullstilt | Ventetid nullstilt | Modus: {{ modus }}
+            → Tilstandsstyringen tar over innen 5 minutter
+
+      - if:
+          - condition: template
+            value_template: "{{ modus in ['heat', 'fan_only'] }}"
+        then:
+          - action: climate.set_fan_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              fan_mode: Auto
+
+          - action: climate.set_swing_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              swing_mode: Swing Horizontal
+
+          - action: logbook.log
+            data:
+              name: Klimastyring
+              message: >
+                [DAG START – justering]
+                Modus={{ modus }} → vifte=Auto | sving=Swing Horizontal
+
+      - stop: "Dag start fullført"
+
+  # ----------------------------------------------------------
+  # NATT START – reset og justering for natt
+  # ----------------------------------------------------------
+  - if:
+      - condition: trigger
+        id: natt_start
+    then:
+      - variables:
+          climate_enhet: "{{ (expand(!input climate_enheter) | map(attribute='entity_id') | list)[0] }}"
+          modus: "{{ states(climate_enhet) }}"
+
+      - action: input_boolean.turn_off
+        target:
+          entity_id: !input boolean_overstyring
+
+      - action: input_datetime.set_datetime
+        target:
+          entity_id: !input datetime_siste_endring
+        data:
+          datetime: "1970-01-01 00:00:00"
+
+      - action: logbook.log
+        data:
+          name: Klimastyring
+          message: >
+            [NATT START]
+            Manuell overstyring nullstilt | Ventetid nullstilt | Modus: {{ modus }}
+            → Tilstandsstyringen tar over innen 5 minutter
+
+      - if:
+          - condition: template
+            value_template: "{{ modus in ['heat', 'fan_only'] }}"
+        then:
+          - action: climate.set_fan_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              fan_mode: Quiet
+
+          - action: climate.set_swing_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              swing_mode: Fixed 3
+
+          - action: logbook.log
+            data:
+              name: Klimastyring
+              message: >
+                [NATT START – justering]
+                Modus={{ modus }} → vifte=Quiet | sving=Fixed 3
+
+      - stop: "Natt start fullført"
+
+  # ----------------------------------------------------------
+  # TILSTANDSSTYRING – hjernen i systemet
+  # ----------------------------------------------------------
+  - action: weather.get_forecasts
+    data:
+      type: hourly
+    target:
+      entity_id: !input weather_entity
+    response_variable: prognose
+
+  - variables:
+      # --- KONFIGURASJONSVERDIER (fra blueprint inputs) ---
+      komfort_høy: !input komfort_høy
+      varme_grense_sol: !input varme_grense_sol
+      varme_grense_skyet: !input varme_grense_skyet
+      stopp_varme_grense: !input stopp_varme_grense
+      stopp_varme_grense_live: !input stopp_varme_grense_live
+      setpoint_dag: !input setpoint_dag
+      setpoint_natt: !input setpoint_natt
+      setpoint_borte: !input setpoint_borte
+      setpoint_kuldesmell: !input setpoint_kuldesmell
+      kuldesmell_grense: !input kuldesmell_grense
+      vifte_start_ute: !input vifte_start_ute
+      ventetid_minutter: !input ventetid_minutter
+
+      # --- LIVE VERDIER ---
+      weather_id: !input weather_entity
+      ute: "{{ state_attr(weather_id, 'temperature') | float(0) }}"
+      inne: "{{ states(!input sensor_inne) | float(20) }}"
+      climate_enhet: "{{ (expand(!input climate_enheter) | map(attribute='entity_id') | list)[0] }}"
+      modus: "{{ states(climate_enhet) }}"
+      er_natt: "{{ now().hour < 8 }}"
+      er_kveld: "{{ now().hour >= 20 }}"
+      vi_er_hjemme: "{{ states(!input boolean_hjemme) == 'on' }}"
+      setpoint: "{{ setpoint_natt if er_natt else setpoint_dag }}"
+
+      # --- PROGNOSE (timesbasert) ---
+      ute_neste_time: >
+        {% set forecast = prognose[weather_id]['forecast'] %}
+        {% set next = forecast | first %}
+        {{ next.temperature | float(0) if next else 0 }}
+
+      # Høyeste temperatur resten av dagen
+      # Fallback 99 = ikke start varme hvis ingen data
+      # Løses i case 1 ved å også sjekke live utetemperatur
+      maks_resten_av_dag: >
+        {% set forecast = prognose[weather_id]['forecast'] %}
+        {% set today = now().date() | string %}
+        {% set remaining = forecast | selectattr('datetime', 'search', today) | list %}
+        {{ remaining | map(attribute='temperature') | map('float', 0) | max if remaining else 99 }}
+
+      # Sol basert på flertallet av gjenværende timer i dag (>50% = sol-dag)
+      # Mer stabil enn å kun sjekke neste time
+      er_sol: >
+        {% set forecast = prognose[weather_id]['forecast'] %}
+        {% set today = now().date() | string %}
+        {% set remaining = forecast | selectattr('datetime', 'search', today) | list %}
+        {% set sol_timer = remaining | selectattr('condition', 'in', ['sunny', 'partlycloudy']) | list | count %}
+        {% set total = remaining | count %}
+        {{ (sol_timer / total) > 0.5 if total > 0 else false }}
+
+      varme_grense: "{{ varme_grense_sol if er_sol else varme_grense_skyet }}"
+
+      # Laveste temperatur i morgendagens prognose
+      # Fallback 99 = ingen kuldesmell hvis ingen data
+      laveste_i_morgen: >
+        {% set forecast = prognose[weather_id]['forecast'] %}
+        {% set tomorrow = (now() + timedelta(days=1)).date() | string %}
+        {% set dag = forecast | selectattr('datetime', 'search', tomorrow) | list %}
+        {{ dag | map(attribute='temperature') | map('float', 99) | min if dag else 99 }}
+
+      # Sant hvis: kveld + kuldesmell meldt i morgen + vi er hjemme
+      forhåndsvarming_aktiv: >
+        {{ er_kveld and laveste_i_morgen < kuldesmell_grense and vi_er_hjemme }}
+
+      # Velger riktig setpoint basert på situasjon:
+      #   1. Borte → setpoint_borte
+      #   2. Forhåndsvarming → setpoint_kuldesmell
+      #   3. Normalt → dag eller natt
+      effektivt_setpoint: >
+        {% if not vi_er_hjemme %}
+          {{ setpoint_borte }}
+        {% elif forhåndsvarming_aktiv %}
+          {{ setpoint_kuldesmell }}
+        {% else %}
+          {{ setpoint }}
+        {% endif %}
+
+      # Minutter siden siste modusendring – hindrer rask av/på-sykling
+      # Fallback 999 = ingen registrert endring → tillat endring
+      minutter_siden_endring: >
+        {% set siste = states(!input datetime_siste_endring) %}
+        {% if siste not in ['unknown', 'unavailable'] %}
+          {{ ((now() - strptime(siste, '%Y-%m-%d %H:%M:%S')).total_seconds() / 60) | int }}
+        {% else %}
+          999
+        {% endif %}
+
+  - condition: state
+    entity_id: !input boolean_overstyring
+    state: "off"
+
+  - choose:
+      # ==========================================================
+      # CASE 0: Forhåndsvarming ved kuldesmell
+      # Høyest prioritet – kjøres kvelden før meldt kuldesmell
+      # ==========================================================
+      - conditions:
+          - condition: template
+            value_template: "{{ forhåndsvarming_aktiv }}"
+          - condition: template
+            value_template: "{{ modus != 'heat' }}"
+          - condition: template
+            value_template: "{{ minutter_siden_endring >= ventetid_minutter }}"
+        sequence:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              hvac_mode: heat
+          - action: climate.set_temperature
+            target:
+              entity_id: !input climate_enheter
+            data:
+              temperature: "{{ setpoint_kuldesmell }}"
+          - action: climate.set_preset_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              preset_mode: Power 75
+          - action: climate.set_fan_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              fan_mode: Quiet
+          - action: climate.set_swing_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              swing_mode: Fixed 3
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: !input datetime_siste_endring
+            data:
+              datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+          - action: logbook.log
+            data:
+              name: Klimastyring
+              message: >
+                [CASE 0 – Forhåndsvarming kuldesmell]
+                Laveste i morgen={{ laveste_i_morgen }}°C < grense={{ kuldesmell_grense }}°C | ute nå={{ ute }}°C
+                Inne={{ inne }}°C | Kveld={{ er_kveld }} | Hjemme={{ vi_er_hjemme }} | Minutter siden endring={{ minutter_siden_endring }}
+                → heat | setpoint={{ setpoint_kuldesmell }}°C | vifte=Quiet | sving=Fixed 3
+
+      # ==========================================================
+      # CASE 1: Start varme
+      # Starter varme hvis kaldt ute nå ELLER kaldt i prognosen
+      # ==========================================================
+      - conditions:
+          - condition: template
+            value_template: "{{ modus != 'heat' }}"
+          - condition: template
+            value_template: >
+              {{ maks_resten_av_dag < varme_grense or
+                 ute < varme_grense }}
+          - condition: template
+            value_template: "{{ minutter_siden_endring >= ventetid_minutter }}"
+        sequence:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              hvac_mode: heat
+          - action: climate.set_temperature
+            target:
+              entity_id: !input climate_enheter
+            data:
+              temperature: "{{ effektivt_setpoint }}"
+          - action: climate.set_preset_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              preset_mode: Power 75
+          - action: climate.set_fan_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              fan_mode: "{{ 'Quiet' if er_natt else 'Auto' }}"
+          - action: climate.set_swing_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              swing_mode: "{{ 'Fixed 3' if er_natt else 'Swing Horizontal' }}"
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: !input datetime_siste_endring
+            data:
+              datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+          - action: logbook.log
+            data:
+              name: Klimastyring
+              message: >
+                [CASE 1 – Start varme]
+                Vær: {{ 'Sol' if er_sol else 'Skyet' }} → grense={{ varme_grense }}°C | maks resten av dag={{ maks_resten_av_dag }}°C | ute nå={{ ute }}°C | neste time={{ ute_neste_time }}°C
+                Inne={{ inne }}°C | Natt={{ er_natt }} | Hjemme={{ vi_er_hjemme }} | Minutter siden endring={{ minutter_siden_endring }}
+                → heat | setpoint={{ effektivt_setpoint }}°C | vifte={{ 'Quiet' if er_natt else 'Auto' }} | sving={{ 'Fixed 3' if er_natt else 'Swing Horizontal' }}
+
+      # ==========================================================
+      # CASE 2: Stopp varme
+      # Stopper varme hvis prognosen eller live utetemperatur er høy nok
+      # ==========================================================
+      - conditions:
+          - condition: template
+            value_template: "{{ modus == 'heat' }}"
+          - condition: template
+            value_template: >
+              {{ maks_resten_av_dag > stopp_varme_grense or
+                 ute_neste_time > stopp_varme_grense_live }}
+          - condition: template
+            value_template: "{{ minutter_siden_endring >= ventetid_minutter }}"
+        sequence:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              hvac_mode: "off"
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: !input datetime_siste_endring
+            data:
+              datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+          - action: logbook.log
+            data:
+              name: Klimastyring
+              message: >
+                [CASE 2 – Stopp varme]
+                Vær: {{ 'Sol' if er_sol else 'Skyet' }} → stopp_grense={{ stopp_varme_grense }}°C (prognose) / {{ stopp_varme_grense_live }}°C (live) | maks resten av dag={{ maks_resten_av_dag }}°C | ute nå={{ ute }}°C | neste time={{ ute_neste_time }}°C
+                Inne={{ inne }}°C | Natt={{ er_natt }} | Hjemme={{ vi_er_hjemme }} | Minutter siden endring={{ minutter_siden_endring }}
+                → off
+
+      # ==========================================================
+      # CASE 3: Start vifte (for varmt inne)
+      # Kjøres kun når vi er hjemme
+      # ==========================================================
+      - conditions:
+          - condition: template
+            value_template: "{{ modus != 'fan_only' }}"
+          - condition: template
+            value_template: |-
+              {{ inne > komfort_høy and
+                 (er_natt or ute > vifte_start_ute or modus == 'heat') }}
+          - condition: template
+            value_template: "{{ vi_er_hjemme }}"
+          - condition: template
+            value_template: "{{ minutter_siden_endring >= ventetid_minutter }}"
+        sequence:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              hvac_mode: fan_only
+          - action: climate.set_fan_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              fan_mode: "{{ 'Quiet' if er_natt else 'Auto' }}"
+          - action: climate.set_swing_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              swing_mode: Fixed 3
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: !input datetime_siste_endring
+            data:
+              datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
+          - action: logbook.log
+            data:
+              name: Klimastyring
+              message: >
+                [CASE 3 – Start vifte]
+                Vær: {{ 'Sol' if er_sol else 'Skyet' }} | ute nå={{ ute }}°C | neste time={{ ute_neste_time }}°C | maks resten av dag={{ maks_resten_av_dag }}°C
+                Inne={{ inne }}°C > komfort_grense={{ komfort_høy }}°C | Natt={{ er_natt }} | Hjemme={{ vi_er_hjemme }} | Minutter siden endring={{ minutter_siden_endring }}
+                → fan_only | vifte={{ 'Quiet' if er_natt else 'Auto' }} | sving=Fixed 3
+
+      # ==========================================================
+      # CASE 4: Nedgrader vifte (ikke lenger for varmt inne)
+      # ==========================================================
+      - conditions:
+          - condition: template
+            value_template: "{{ modus == 'fan_only' }}"
+          - condition: template
+            value_template: |-
+              {{ not (inne > komfort_høy and
+                      (er_natt or ute > vifte_start_ute)) }}
+        sequence:
+          - action: climate.set_fan_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              fan_mode: Quiet
+          - action: climate.set_swing_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              swing_mode: Swing Horizontal
+          - action: logbook.log
+            data:
+              name: Klimastyring
+              message: >
+                [CASE 4 – Nedgrader vifte]
+                Vær: {{ 'Sol' if er_sol else 'Skyet' }} | ute nå={{ ute }}°C | neste time={{ ute_neste_time }}°C | maks resten av dag={{ maks_resten_av_dag }}°C
+                Inne={{ inne }}°C | Natt={{ er_natt }} | Hjemme={{ vi_er_hjemme }}
+                → vifte=Quiet | sving=Swing Horizontal (ikke lenger over komfort_grense={{ komfort_høy }}°C)
+
+      # ==========================================================
+      # CASE 5: Sirkulasjon (pumpa er av)
+      # Grunnmodus – pumpa kjører alltid minst på stille vifte
+      # ==========================================================
+      - conditions:
+          - condition: template
+            value_template: "{{ modus == 'off' }}"
+        sequence:
+          - action: climate.set_hvac_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              hvac_mode: fan_only
+          - action: climate.set_fan_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              fan_mode: Quiet
+          - action: climate.set_swing_mode
+            target:
+              entity_id: !input climate_enheter
+            data:
+              swing_mode: Fixed 3
+          - action: logbook.log
+            data:
+              name: Klimastyring
+              message: >
+                [CASE 5 – Sirkulasjon]
+                Vær: {{ 'Sol' if er_sol else 'Skyet' }} | ute nå={{ ute }}°C | neste time={{ ute_neste_time }}°C | maks resten av dag={{ maks_resten_av_dag }}°C
+                Inne={{ inne }}°C | Natt={{ er_natt }} | Hjemme={{ vi_er_hjemme }}
+                → fan_only | vifte=Quiet | sving=Fixed 3 (modus var off)
+
+    default:
+      - action: logbook.log
+        data:
+          name: Klimastyring
+          message: >
+            [INGEN ENDRING – modus={{ modus }}]
+            Vær: {{ 'Sol' if er_sol else 'Skyet' }} → grense={{ varme_grense }}°C | maks resten av dag={{ maks_resten_av_dag }}°C | ute nå={{ ute }}°C | neste time={{ ute_neste_time }}°C
+            Inne={{ inne }}°C | Natt={{ er_natt }} | Kveld={{ er_kveld }} | Hjemme={{ vi_er_hjemme }} | Forhåndsvarming={{ forhåndsvarming_aktiv }} | Laveste i morgen={{ laveste_i_morgen }}°C | Minutter siden endring={{ minutter_siden_endring }}
+            → Beholder nåværende modus={{ modus }} – ingen handling nødvendig
+
+mode: single
+max_exceeded: silent
+
+# ============================================================
+# TILLEGGSINFORMASJON
+# ============================================================
+#
+# FILPLASSERING I HA:
+#   Legg denne filen i:
+#   config/blueprints/automation/klimastyring/klimastyring.yaml
+#
+# IMPORT VIA UI:
+#   Innstillinger → Automasjoner → Blueprints → Importer blueprint
+#   Lim inn filsti eller GitHub URL
+#
+# FORUTSETNINGER:
+#   Varmepumpen din må støtte følgende tjenester:
+#   - climate.set_hvac_mode (heat, fan_only, off)
+#   - climate.set_temperature
+#   - climate.set_fan_mode (Quiet, Auto)
+#   - climate.set_swing_mode (Fixed 3, Swing Horizontal)
+#   - climate.set_preset_mode (Power 75)
+#
+#   Støttede merker: Mitsubishi, Daikin, Fujitsu, Panasonic
+#   og andre pumper med full HA-integrasjon.
+#
+# PRESET_MODE:
+#   "Power 75" er spesifikt for Mitsubishi-pumper.
+#   Fjern climate.set_preset_mode-steget hvis pumpa di ikke støtter dette.
+#
+# FEILSØKING:
+#   Sjekk Logbook i HA og filtrer på "Klimastyring" for å se
+#   hva automasjonen gjorde og hvorfor ved hver kjøring.
+#
+# VERSJON: 1.0
+# ============================================================

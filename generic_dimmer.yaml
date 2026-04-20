@@ -1,0 +1,223 @@
+blueprint:
+  name: ZHA Generic - Dimming
+  description: >
+    # Namron Veggbryter med dimming
+
+    Laget av Ole-Kristian de Voogd
+
+    Blueprint for veggbryter dimming av lys.
+    Brukes med ZHA og custom quirk som sender zha_event kommandoer.
+
+    ## Kanaler
+    Velg antall kanaler via vippebryteren bak på enheten (1, 2 eller 3).
+
+    ## Funksjon per knapp
+    - **Kort trykk ON** – Slår på lyset
+    - **Kort trykk OFF** – Slår av lyset
+    - **Hold ON** – Dimmer opp
+    - **Hold OFF** – Dimmer ned
+
+    ## Merk
+    Krever ZHA-integrasjonen med custom quirk for Namron.
+    Fungerer ikke med Zigbee2MQTT.
+
+  domain: automation
+  author: Ole-Kristian de Voogd
+
+  input:
+    remote_device:
+      name: Namron veggbryter
+      description: Velg Namron veggbryter fra ZHA
+      selector:
+        device:
+          integration: zha
+          multiple: false
+
+    channel_1_light:
+      name: Kanal 1 – Lys
+      description: Velg lys som styres av kanal 1
+      selector:
+        target:
+          entity:
+            domain: light
+
+    channel_1_dim_step:
+      name: Kanal 1 – Dimme-steg (%)
+      description: Hvor mange prosent lysstyrken endres per hold-intervall
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 50
+          unit_of_measurement: "%"
+
+    channel_2_light:
+      name: Kanal 2 – Lys
+      description: Velg lys som styres av kanal 2 (la stå tom hvis ikke i bruk)
+      default: {}
+      selector:
+        target:
+          entity:
+            domain: light
+
+    channel_2_dim_step:
+      name: Kanal 2 – Dimme-steg (%)
+      description: Hvor mange prosent lysstyrken endres per hold-intervall
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 50
+          unit_of_measurement: "%"
+
+    channel_3_light:
+      name: Kanal 3 – Lys
+      description: Velg lys som styres av kanal 3 (la stå tom hvis ikke i bruk)
+      default: {}
+      selector:
+        target:
+          entity:
+            domain: light
+
+    channel_3_dim_step:
+      name: Kanal 3 – Dimme-steg (%)
+      description: Hvor mange prosent lysstyrken endres per hold-intervall
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 50
+          unit_of_measurement: "%"
+
+mode: restart
+max_exceeded: silent
+
+trigger:
+  - platform: event
+    event_type: zha_event
+
+variables:
+  remote_device: !input remote_device
+  trigger_device_id: "{{ trigger.event.data.device_id | default('') }}"
+  command: "{{ trigger.event.data.command | default('') }}"
+  channel_1_dim_step: !input channel_1_dim_step
+  channel_2_dim_step: !input channel_2_dim_step
+  channel_3_dim_step: !input channel_3_dim_step
+
+condition:
+  - condition: template
+    value_template: "{{ trigger_device_id == remote_device }}"
+
+action:
+  - choose:
+
+      # KANAL 1
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'button_1_on_short_press' }}"
+        sequence:
+          - action: light.turn_on
+            target: !input channel_1_light
+
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'button_1_off_short_press' }}"
+        sequence:
+          - action: light.turn_off
+            target: !input channel_1_light
+            data:
+              transition: 1
+
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'button_1_on_long_hold' }}"
+        sequence:
+          - action: light.turn_on
+            target: !input channel_1_light
+            data:
+              brightness_step_pct: "{{ channel_1_dim_step }}"
+              transition: 1
+
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'button_1_off_long_hold' }}"
+        sequence:
+          - action: light.turn_on
+            target: !input channel_1_light
+            data:
+              brightness_step_pct: "{{ -channel_1_dim_step }}"
+              transition: 1
+
+      # KANAL 2
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'button_2_on_short_press' }}"
+        sequence:
+          - action: light.turn_on
+            target: !input channel_2_light
+
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'button_2_off_short_press' }}"
+        sequence:
+          - action: light.turn_off
+            target: !input channel_2_light
+            data:
+              transition: 1
+
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'button_2_on_long_hold' }}"
+        sequence:
+          - action: light.turn_on
+            target: !input channel_2_light
+            data:
+              brightness_step_pct: "{{ channel_2_dim_step }}"
+              transition: 1
+
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'button_2_off_long_hold' }}"
+        sequence:
+          - action: light.turn_on
+            target: !input channel_2_light
+            data:
+              brightness_step_pct: "{{ -channel_2_dim_step }}"
+              transition: 1
+
+      # KANAL 3
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'button_3_on_short_press' }}"
+        sequence:
+          - action: light.turn_on
+            target: !input channel_3_light
+
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'button_3_off_short_press' }}"
+        sequence:
+          - action: light.turn_off
+            target: !input channel_3_light
+            data:
+              transition: 1
+
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'button_3_on_long_hold' }}"
+        sequence:
+          - action: light.turn_on
+            target: !input channel_3_light
+            data:
+              brightness_step_pct: "{{ channel_3_dim_step }}"
+              transition: 1
+
+      - conditions:
+          - condition: template
+            value_template: "{{ command == 'button_3_off_long_hold' }}"
+        sequence:
+          - action: light.turn_on
+            target: !input channel_3_light
+            data:
+              brightness_step_pct: "{{ -channel_3_dim_step }}"
+              transition: 1

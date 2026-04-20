@@ -1,0 +1,268 @@
+blueprint:
+  name: Hue Dimmer Switch - 4 knapper med dimming
+  description: >
+    # Hue Dimmer Switch
+    
+    Laget av Ole-Kristian de Voogd
+    
+    Blueprint for Philips Hue Dimmer Switch (8719514274617) - trådløs, 
+    batteridrevet dimmer med 4 knapper.
+    
+    **Knapp 2 og 3** er dedikert til dimming opp/ned.
+    **Knapp 1 og 4** kan konfigureres fritt.
+    
+    ## Om bryteren
+    Hue Dimmer switch kan festes på vegger eller magnetiske underlag, 
+    men kan også brukes som fjernbetjening hvor som helst i hjemmet.
+    Koble til en Hue Bridge for å tilpasse bryteren ved å legge til 
+    favorittlysscener eller stille inn den perfekte belysningen basert 
+    på tiden på døgnet.
+    
+    ## Knapper
+    - **Knapp 1** – Valgfri aksjon (kort/langt trykk)
+    - **Knapp 2** – Dimmer opp
+    - **Knapp 3** – Dimmer ned
+    - **Knapp 4** – Valgfri aksjon (kort/langt trykk)
+
+    ## Merk
+    Krever Philips Hue-integrasjonen med Hue Bridge.
+    Fungerer ikke med brytere koblet direkte til Zigbee i Home Assistant.
+
+  domain: automation
+  author: Ole-Kristian de Voogd
+
+  input:
+    remote_device:
+      name: Bryter
+      description: >
+        Velg Hue dimmer switch.
+        Bryteren må være koblet til en Hue Bridge via Philips Hue-integrasjonen.
+        Fungerer ikke med brytere koblet direkte til Zigbee i Home Assistant.
+      selector:
+        device:
+          integration: hue
+          multiple: false
+
+    light_target:
+      name: Lys for dimming (knapp 2 og 3)
+      description: Velg lys, område eller gruppe som skal dimmes
+      selector:
+        target:
+          entity:
+            domain: light
+
+    dim_step:
+      name: Dimme-steg ved kort trykk (%)
+      description: Hvor mange prosent lysstyrken endres ved kort trykk
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 50
+          unit_of_measurement: "%"
+
+    button_1_short_press:
+      name: Knapp 1 – Kort trykk
+      default: []
+      selector:
+        action: {}
+
+    button_1_long_press:
+      name: Knapp 1 – Langt trykk
+      default: []
+      selector:
+        action: {}
+
+    button_4_short_press:
+      name: Knapp 4 – Kort trykk
+      default: []
+      selector:
+        action: {}
+
+    button_4_long_press:
+      name: Knapp 4 – Langt trykk
+      default: []
+      selector:
+        action: {}
+
+mode: parallel
+max_exceeded: silent
+
+trigger:
+  - device_id: !input remote_device
+    domain: hue
+    platform: device
+    type: short_release
+    subtype: 1
+    id: button_1_short
+  - device_id: !input remote_device
+    domain: hue
+    platform: device
+    type: long_release
+    subtype: 1
+    id: button_1_long
+  - device_id: !input remote_device
+    domain: hue
+    platform: device
+    type: initial_press
+    subtype: 2
+    id: button_2_initial
+  - device_id: !input remote_device
+    domain: hue
+    platform: device
+    type: repeat
+    subtype: 2
+    id: button_2_repeat
+  - device_id: !input remote_device
+    domain: hue
+    platform: device
+    type: short_release
+    subtype: 2
+    id: button_2_short
+  - device_id: !input remote_device
+    domain: hue
+    platform: device
+    type: long_release
+    subtype: 2
+    id: button_2_long
+  - device_id: !input remote_device
+    domain: hue
+    platform: device
+    type: initial_press
+    subtype: 3
+    id: button_3_initial
+  - device_id: !input remote_device
+    domain: hue
+    platform: device
+    type: repeat
+    subtype: 3
+    id: button_3_repeat
+  - device_id: !input remote_device
+    domain: hue
+    platform: device
+    type: short_release
+    subtype: 3
+    id: button_3_short
+  - device_id: !input remote_device
+    domain: hue
+    platform: device
+    type: long_release
+    subtype: 3
+    id: button_3_long
+  - device_id: !input remote_device
+    domain: hue
+    platform: device
+    type: short_release
+    subtype: 4
+    id: button_4_short
+  - device_id: !input remote_device
+    domain: hue
+    platform: device
+    type: long_release
+    subtype: 4
+    id: button_4_long
+
+condition: []
+
+variables:
+  dim_step: !input dim_step
+
+action:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id: button_1_short
+        sequence: !input button_1_short_press
+
+      - conditions:
+          - condition: trigger
+            id: button_1_long
+        sequence: !input button_1_long_press
+
+      - conditions:
+          - condition: trigger
+            id: button_2_initial
+        sequence:
+          - action: light.turn_on
+            target: !input light_target
+            data:
+              brightness_step_pct: !input dim_step
+              transition: 1
+
+      - conditions:
+          - condition: trigger
+            id: button_2_repeat
+        sequence:
+          - action: light.turn_on
+            target: !input light_target
+            data:
+              brightness_step_pct: !input dim_step
+              transition: 1
+
+      - conditions:
+          - condition: trigger
+            id: button_2_short
+        sequence:
+          - action: light.turn_on
+            target: !input light_target
+            data:
+              brightness_step_pct: !input dim_step
+              transition: 0.5
+
+      - conditions:
+          - condition: trigger
+            id: button_2_long
+        sequence:
+          - action: light.turn_on
+            target: !input light_target
+            data:
+              transition: 1
+
+      - conditions:
+          - condition: trigger
+            id: button_3_initial
+        sequence:
+          - action: light.turn_on
+            target: !input light_target
+            data:
+              brightness_step_pct: "{{ -dim_step }}"
+              transition: 1
+
+      - conditions:
+          - condition: trigger
+            id: button_3_repeat
+        sequence:
+          - action: light.turn_on
+            target: !input light_target
+            data:
+              brightness_step_pct: "{{ -dim_step }}"
+              transition: 1
+
+      - conditions:
+          - condition: trigger
+            id: button_3_short
+        sequence:
+          - action: light.turn_on
+            target: !input light_target
+            data:
+              brightness_step_pct: "{{ -dim_step }}"
+              transition: 0.5
+
+      - conditions:
+          - condition: trigger
+            id: button_3_long
+        sequence:
+          - action: light.turn_on
+            target: !input light_target
+            data:
+              transition: 1
+
+      - conditions:
+          - condition: trigger
+            id: button_4_short
+        sequence: !input button_4_short_press
+
+      - conditions:
+          - condition: trigger
+            id: button_4_long
+        sequence: !input button_4_long_press
