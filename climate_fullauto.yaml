@@ -276,7 +276,6 @@ blueprint:
       name: "Stopp varme grense live (°C)"
       description: >
         Hvis neste times utetemperatur overstiger denne stoppes varmen umiddelbart.
-        Fanger opp varme dager der prognosen ikke har oppdatert seg.
         Eksempel: 17°C.
       default: 17
       selector:
@@ -289,7 +288,6 @@ blueprint:
       name: "Vifte start ute (°C)"
       description: >
         Minimum utetemperatur for å starte vifte om natten.
-        Under denne antas at huset kjøler seg ned naturlig.
         Eksempel: 17°C.
       default: 17
       selector:
@@ -360,6 +358,18 @@ triggers:
 
 actions:
   # ----------------------------------------------------------
+  # FELLES FØRSTE STEG: Løs alle !input til variabler
+  # på YAML-nivå slik at de kan brukes trygt i Jinja2-templates
+  # ----------------------------------------------------------
+  - variables:
+      weather_id: !input weather_entity
+      sensor_inne_id: !input sensor_inne
+      boolean_hjemme_id: !input boolean_hjemme
+      boolean_overstyring_id: !input boolean_overstyring
+      datetime_id: !input datetime_siste_endring
+      climate_enheter_liste: !input climate_enheter
+
+  # ----------------------------------------------------------
   # DAG START – reset og justering for dagtid
   # ----------------------------------------------------------
   - if:
@@ -367,7 +377,7 @@ actions:
         id: dag_start
     then:
       - variables:
-          climate_enhet: "{{ (expand(!input climate_enheter) | map(attribute='entity_id') | list)[0] }}"
+          climate_enhet: "{{ (expand(climate_enheter_liste) | map(attribute='entity_id') | list)[0] }}"
           modus: "{{ states(climate_enhet) }}"
 
       - action: input_boolean.turn_off
@@ -421,7 +431,7 @@ actions:
         id: natt_start
     then:
       - variables:
-          climate_enhet: "{{ (expand(!input climate_enheter) | map(attribute='entity_id') | list)[0] }}"
+          climate_enhet: "{{ (expand(climate_enheter_liste) | map(attribute='entity_id') | list)[0] }}"
           modus: "{{ states(climate_enhet) }}"
 
       - action: input_boolean.turn_off
@@ -478,7 +488,7 @@ actions:
     response_variable: prognose
 
   - variables:
-      # --- KONFIGURASJONSVERDIER (fra blueprint inputs) ---
+      # --- KONFIGURASJONSVERDIER (fra blueprint inputs, løst på YAML-nivå) ---
       komfort_høy: !input komfort_høy
       varme_grense_sol: !input varme_grense_sol
       varme_grense_skyet: !input varme_grense_skyet
@@ -493,14 +503,14 @@ actions:
       ventetid_minutter: !input ventetid_minutter
 
       # --- LIVE VERDIER ---
-      weather_id: !input weather_entity
+      # Bruker variabelnavnene fra første steg – ingen !input i templates
       ute: "{{ state_attr(weather_id, 'temperature') | float(0) }}"
-      inne: "{{ states(!input sensor_inne) | float(20) }}"
-      climate_enhet: "{{ (expand(!input climate_enheter) | map(attribute='entity_id') | list)[0] }}"
+      inne: "{{ states(sensor_inne_id) | float(20) }}"
+      climate_enhet: "{{ (expand(climate_enheter_liste) | map(attribute='entity_id') | list)[0] }}"
       modus: "{{ states(climate_enhet) }}"
       er_natt: "{{ now().hour < 8 }}"
       er_kveld: "{{ now().hour >= 20 }}"
-      vi_er_hjemme: "{{ states(!input boolean_hjemme) == 'on' }}"
+      vi_er_hjemme: "{{ states(boolean_hjemme_id) == 'on' }}"
       setpoint: "{{ setpoint_natt if er_natt else setpoint_dag }}"
 
       # --- PROGNOSE (timesbasert) ---
@@ -511,7 +521,6 @@ actions:
 
       # Høyeste temperatur resten av dagen
       # Fallback 99 = ikke start varme hvis ingen data
-      # Løses i case 1 ved å også sjekke live utetemperatur
       maks_resten_av_dag: >
         {% set forecast = prognose[weather_id]['forecast'] %}
         {% set today = now().date() | string %}
@@ -519,7 +528,6 @@ actions:
         {{ remaining | map(attribute='temperature') | map('float', 0) | max if remaining else 99 }}
 
       # Sol basert på flertallet av gjenværende timer i dag (>50% = sol-dag)
-      # Mer stabil enn å kun sjekke neste time
       er_sol: >
         {% set forecast = prognose[weather_id]['forecast'] %}
         {% set today = now().date() | string %}
@@ -538,14 +546,9 @@ actions:
         {% set dag = forecast | selectattr('datetime', 'search', tomorrow) | list %}
         {{ dag | map(attribute='temperature') | map('float', 99) | min if dag else 99 }}
 
-      # Sant hvis: kveld + kuldesmell meldt i morgen + vi er hjemme
       forhåndsvarming_aktiv: >
         {{ er_kveld and laveste_i_morgen < kuldesmell_grense and vi_er_hjemme }}
 
-      # Velger riktig setpoint basert på situasjon:
-      #   1. Borte → setpoint_borte
-      #   2. Forhåndsvarming → setpoint_kuldesmell
-      #   3. Normalt → dag eller natt
       effektivt_setpoint: >
         {% if not vi_er_hjemme %}
           {{ setpoint_borte }}
@@ -555,12 +558,13 @@ actions:
           {{ setpoint }}
         {% endif %}
 
-      # Minutter siden siste modusendring – hindrer rask av/på-sykling
+      # Timezone-fix: strptime returnerer naiv datetime, now() er timezone-aware.
+      # .replace(tzinfo=now().tzinfo) gjør dem sammenlignbare.
       # Fallback 999 = ingen registrert endring → tillat endring
       minutter_siden_endring: >
-        {% set siste = states(!input datetime_siste_endring) %}
+        {% set siste = states(datetime_id) %}
         {% if siste not in ['unknown', 'unavailable'] %}
-          {{ ((now() - strptime(siste, '%Y-%m-%d %H:%M:%S')).total_seconds() / 60) | int }}
+          {{ ((now() - strptime(siste, '%Y-%m-%d %H:%M:%S').replace(tzinfo=now().tzinfo)).total_seconds() / 60) | int }}
         {% else %}
           999
         {% endif %}
@@ -572,7 +576,6 @@ actions:
   - choose:
       # ==========================================================
       # CASE 0: Forhåndsvarming ved kuldesmell
-      # Høyest prioritet – kjøres kvelden før meldt kuldesmell
       # ==========================================================
       - conditions:
           - condition: template
@@ -623,7 +626,6 @@ actions:
 
       # ==========================================================
       # CASE 1: Start varme
-      # Starter varme hvis kaldt ute nå ELLER kaldt i prognosen
       # ==========================================================
       - conditions:
           - condition: template
@@ -676,7 +678,6 @@ actions:
 
       # ==========================================================
       # CASE 2: Stopp varme
-      # Stopper varme hvis prognosen eller live utetemperatur er høy nok
       # ==========================================================
       - conditions:
           - condition: template
@@ -709,7 +710,6 @@ actions:
 
       # ==========================================================
       # CASE 3: Start vifte (for varmt inne)
-      # Kjøres kun når vi er hjemme
       # ==========================================================
       - conditions:
           - condition: template
@@ -753,7 +753,7 @@ actions:
                 → fan_only | vifte={{ 'Quiet' if er_natt else 'Auto' }} | sving=Fixed 3
 
       # ==========================================================
-      # CASE 4: Nedgrader vifte (ikke lenger for varmt inne)
+      # CASE 4: Nedgrader vifte
       # ==========================================================
       - conditions:
           - condition: template
@@ -784,7 +784,6 @@ actions:
 
       # ==========================================================
       # CASE 5: Sirkulasjon (pumpa er av)
-      # Grunnmodus – pumpa kjører alltid minst på stille vifte
       # ==========================================================
       - conditions:
           - condition: template
@@ -858,5 +857,5 @@ max_exceeded: silent
 #   Sjekk Logbook i HA og filtrer på "Klimastyring" for å se
 #   hva automasjonen gjorde og hvorfor ved hver kjøring.
 #
-# VERSJON: 1.0
+# VERSJON: 1.1
 # ============================================================
