@@ -1,0 +1,323 @@
+blueprint:
+  name: "Varmeovn/Varmekabel – Temperaturstyring"
+  description: >
+    Styrer varmeovner eller varmekabler via én climate- eller switch-enhet.
+
+    Tre trigger-moduser:
+      • Tidsintervall       – korriger temperatur jevnlig
+      • Setpunkt-endring    – korriger hvis noen endrer termostaten manuelt
+      • Temperaturavvik     – korriger når romtemp avviker fra mål (±°C)
+
+    Støtter dag-, kveld- og natttemperatur med valgfrie og justerbare klokkeslett.
+    Kjøres ved HA-oppstart for å sikre riktig temperatur umiddelbart.
+
+    ⚠️  Switch-enheter krever alltid ekstern temperatursensor.
+        Climate-enheter bruker innebygd sensor hvis ingen ekstern er valgt.
+  domain: automation
+
+  input:
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # ENHET OG SENSOR
+    # ══════════════════════════════════════════════════════════════════════════
+
+    target_entity:
+      name: "Enhet (climate eller switch)"
+      description: "Velg varmeovn eller varmekabel-termostat som skal styres."
+      selector:
+        entity:
+          domain:
+            - climate
+            - switch
+
+    temp_sensor:
+      name: "Temperatursensor (valgfri for climate)"
+      description: >
+        Ekstern temperatursensor. Påkrevd for switch-enheter.
+        For climate-enheter: la stå tom for å bruke enhetens innebygde sensor.
+      default: ""
+      selector:
+        entity:
+          domain: sensor
+          device_class: temperature
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # TRIGGER-MODUS OG PARAMETERE
+    # ══════════════════════════════════════════════════════════════════════════
+
+    trigger_mode:
+      name: "Trigger-modus"
+      description: >
+        Velg hvordan automatiseringen skal aktiveres og korrigere temperaturen.
+
+        ⏱ Tidsintervall     – kjøres med fast intervall (1–60 min).
+        🔄 Setpunkt-endring  – reagerer hvis noen manuelt endrer setpunkt på termostaten.
+        📊 Temperaturavvik   – reagerer (hvert minutt) når romtemp avviker fra mål med ±°C.
+      default: "time"
+      selector:
+        select:
+          options:
+            - label: "⏱ Tidsintervall"
+              value: "time"
+            - label: "🔄 Setpunkt-endring (manuell endring på termostat)"
+              value: "state"
+            - label: "📊 Temperaturavvik (±°C fra måltemperatur)"
+              value: "deviation"
+
+    time_interval:
+      name: "Kjøreintervall (minutter)"
+      description: >
+        Gjelder kun for tidsintervall-modus.
+        Automatiseringen kjøres ved minutt-tall delelig med intervallet.
+        Eks: intervall 10 → kjøring på :00, :10, :20, :30, :40, :50.
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 60
+          step: 1
+          unit_of_measurement: "min"
+          mode: slider
+
+    deviation_threshold:
+      name: "Avviksterskel (±°C)"
+      description: >
+        Gjelder kun for avviksmodus.
+        Maksimalt tillatt avvik fra måltemperatur før korrigering utføres.
+      default: 0.5
+      selector:
+        number:
+          min: 0.1
+          max: 5.0
+          step: 0.1
+          unit_of_measurement: "°C"
+          mode: slider
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # DAG – standardtemperatur (alltid aktiv som fallback)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    day_temp:
+      name: "Dagtemperatur"
+      description: "Standardtemperatur. Brukes alltid hvis kveld og natt ikke er aktivert."
+      default: 24
+      selector:
+        number:
+          min: 5
+          max: 35
+          step: 0.5
+          unit_of_measurement: "°C"
+          mode: slider
+
+    day_start:
+      name: "Dag starter (klokkeslett)"
+      description: "Klokkeslett for overgang fra natt til dagmodus."
+      default: "06:00:00"
+      selector:
+        time:
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # KVELD – valgfri periode
+    # ══════════════════════════════════════════════════════════════════════════
+
+    evening_enabled:
+      name: "Aktiver kveldsmodus"
+      description: "Slå på for å bruke egen kveldstemperatur og klokkeslett."
+      default: false
+      selector:
+        boolean:
+
+    evening_start:
+      name: "Kveld starter (klokkeslett)"
+      default: "21:00:00"
+      selector:
+        time:
+
+    evening_temp:
+      name: "Kveldstemperatur"
+      default: 22
+      selector:
+        number:
+          min: 5
+          max: 35
+          step: 0.5
+          unit_of_measurement: "°C"
+          mode: slider
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # NATT – valgfri periode
+    # ══════════════════════════════════════════════════════════════════════════
+
+    night_enabled:
+      name: "Aktiver nattmodus"
+      description: "Slå på for å bruke egen nattemperatur og klokkeslett."
+      default: false
+      selector:
+        boolean:
+
+    night_start:
+      name: "Natt starter (klokkeslett)"
+      default: "23:00:00"
+      selector:
+        time:
+
+    night_temp:
+      name: "Nattemperatur"
+      default: 20
+      selector:
+        number:
+          min: 5
+          max: 35
+          step: 0.5
+          unit_of_measurement: "°C"
+          mode: slider
+
+# ════════════════════════════════════════════════════════════════════════════
+# VARIABLER – beregnes ved hver kjøring
+# ════════════════════════════════════════════════════════════════════════════
+
+variables:
+  target_entity:        !input target_entity
+  temp_sensor:          !input temp_sensor
+  trigger_mode:         !input trigger_mode
+  time_interval:        !input time_interval
+  deviation_threshold:  !input deviation_threshold
+  day_temp:             !input day_temp
+  day_start:            !input day_start
+  evening_enabled:      !input evening_enabled
+  evening_start:        !input evening_start
+  evening_temp:         !input evening_temp
+  night_enabled:        !input night_enabled
+  night_start:          !input night_start
+  night_temp:           !input night_temp
+  entity_domain:        "{{ target_entity.split('.')[0] }}"
+
+  # Beregner korrekt måltemperatur basert på tid på døgnet.
+  # Håndterer midnatt-kryss korrekt (f.eks. natt 23:00 → dag 06:00).
+  target_temp: >
+    {% set now_min = now().hour * 60 + now().minute %}
+    {% set d = day_start.split(':') %}
+    {% set e = evening_start.split(':') %}
+    {% set n = night_start.split(':') %}
+    {% set day_min = (d[0] | int) * 60 + (d[1] | int) %}
+    {% set eve_min = (e[0] | int) * 60 + (e[1] | int) %}
+    {% set ngt_min = (n[0] | int) * 60 + (n[1] | int) %}
+    {% if night_enabled and (now_min >= ngt_min or now_min < day_min) %}
+      {{ night_temp | float }}
+    {% elif evening_enabled and night_enabled and now_min >= eve_min and now_min < ngt_min %}
+      {{ evening_temp | float }}
+    {% elif evening_enabled and not night_enabled and (now_min >= eve_min or now_min < day_min) %}
+      {{ evening_temp | float }}
+    {% else %}
+      {{ day_temp | float }}
+    {% endif %}
+
+  # Henter aktuell romtemperatur – fra ekstern sensor eller enhetens innebygde sensor.
+  # Hvis unavailable/unknown brukes target_temp som fallback (ingen unødvendig korrigering).
+  current_temp: >
+    {% if temp_sensor not in ['', none] %}
+      {{ states(temp_sensor) | float(target_temp) }}
+    {% else %}
+      {{ state_attr(target_entity, 'current_temperature') | float(target_temp) }}
+    {% endif %}
+
+# ════════════════════════════════════════════════════════════════════════════
+# TRIGGERE
+# ════════════════════════════════════════════════════════════════════════════
+
+triggers:
+  # Kjøres ved HA-oppstart – sikrer riktig temp umiddelbart etter restart
+  - trigger: homeassistant
+    event: start
+    id: ha_start
+
+  # Tidsbasert puls – hvert minutt. Selve intervallet filtreres i conditions.
+  - trigger: time_pattern
+    minutes: "*"
+    id: time_trigger
+
+  # Reagerer på endring av setpunkt (temperature-attributt) på climate-enheter
+  - trigger: state
+    entity_id: !input target_entity
+    attribute: temperature
+    id: setpoint_changed
+
+  # Reagerer på tilstandsendring – primært for switch (on/off), men også climate hvac_mode
+  - trigger: state
+    entity_id: !input target_entity
+    id: entity_state_changed
+
+# ════════════════════════════════════════════════════════════════════════════
+# BETINGELSER – ruter basert på valgt trigger-modus
+# ════════════════════════════════════════════════════════════════════════════
+
+conditions:
+  - condition: template
+    value_template: >
+      {% set mode = trigger_mode %}
+      {% set tid = trigger.id %}
+      {% set domain = entity_domain %}
+
+      {% if tid == 'ha_start' %}
+        {# Kjør alltid ved HA-oppstart uavhengig av modus #}
+        true
+
+      {% elif mode == 'time' %}
+        {# Tidsintervall: sjekk at minuttall er delelig med ønsket intervall #}
+        {{ tid == 'time_trigger' and now().minute % (time_interval | int) == 0 }}
+
+      {% elif mode == 'state' %}
+        {# Setpunkt-endring: climate → setpunkt ≠ mål | switch → tilstandsendring #}
+        {% if domain == 'climate' %}
+          {{ tid == 'setpoint_changed' and
+             state_attr(target_entity, 'temperature') | float(-1) != target_temp | float }}
+        {% else %}
+          {{ tid == 'entity_state_changed' }}
+        {% endif %}
+
+      {% elif mode == 'deviation' %}
+        {# Avviksmodus: sjekk hvert minutt om romtemp avviker mer enn terskel #}
+        {{ tid == 'time_trigger' and
+           (current_temp - target_temp | float) | abs >= deviation_threshold | float }}
+
+      {% else %}
+        false
+      {% endif %}
+
+# ════════════════════════════════════════════════════════════════════════════
+# HANDLINGER
+# ════════════════════════════════════════════════════════════════════════════
+
+actions:
+  - choose:
+
+      # ── Climate-enhet: sett ønsket temperatur direkte ──────────────────────
+      - conditions:
+          - condition: template
+            value_template: "{{ entity_domain == 'climate' }}"
+        sequence:
+          - action: climate.set_temperature
+            target:
+              entity_id: "{{ target_entity }}"
+            data:
+              temperature: "{{ target_temp }}"
+
+      # ── Switch-enhet: slå av/på basert på romtemp vs. måltemp ─────────────
+      - conditions:
+          - condition: template
+            value_template: "{{ entity_domain == 'switch' }}"
+        sequence:
+          - choose:
+              - conditions:
+                  - condition: template
+                    value_template: "{{ current_temp < target_temp | float }}"
+                sequence:
+                  - action: switch.turn_on
+                    target:
+                      entity_id: "{{ target_entity }}"
+            default:
+              - action: switch.turn_off
+                target:
+                  entity_id: "{{ target_entity }}"
+
+mode: restart
